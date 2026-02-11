@@ -1,0 +1,3 @@
+[submodule "gym-cooking"]
+	path = gym-cooking
+	url = git@github.com:cicl-stanford/gym-cooking.git
