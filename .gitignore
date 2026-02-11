@@ -1,2 +1,10 @@
 .DS_Store
 *.pyc
+__pycache__/
+*.pkl
+.Rhistory
+*_cache/
+*_files/
+brms_fit_*.rds
+*.zip
+.Rproj.user

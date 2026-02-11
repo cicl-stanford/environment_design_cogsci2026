@@ -1,0 +1,15 @@
+{
+  "id": "923da982-5016-4456-980f-fe08463be1e4",
+  "floor_plan": "-------\nT     O\n-     -\n-     /\n-     -\n-     *\n-1---L-",
+  "furniture": {
+    "grid": [
+      ["p", "-"],
+      ["-", "-"],
+      ["-", "-"]
+    ],
+    "id": "1_on_table__923da982-5016-4456-980f-fe08463be1e4",
+    "name": "Table"
+  },
+  "notes": "Intended to differentiate full vs. efficiency-ablation model. Difference intended when making Tomato Salad. There are no differences in which placements are feasible between the dishes. This layout has 1 objects on the table.",
+  "created_at": "2025-12-19T19:03:51.410752Z"
+}

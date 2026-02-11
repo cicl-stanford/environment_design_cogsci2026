@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Salt Salt Salt Acid</title>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, user-scalable=no"
+    />
+
+    <script src="https://unpkg.com/lodash@4.17.21"></script>
+
+    <script src="https://unpkg.com/jspsych@8.2.1"></script>
+    <script src="https://unpkg.com/@jspsych/plugin-preload@2.1.0"></script>
+    <script src="https://unpkg.com/@jspsych/plugin-browser-check@2.1.0"></script>
+    <script src="https://unpkg.com/@jspsych/plugin-instructions@2.1.0"></script>
+    <script src="https://unpkg.com/@jspsych/plugin-survey-multi-choice@2.1.0"></script>
+    <script src="https://unpkg.com/@jspsych/plugin-html-button-response@2.1.0"></script>
+    <script src="./js/plugin-survey-slider.js"></script>
+    <script src="https://unpkg.com/@jspsych/plugin-survey@2.1.0"></script>
+    <script src="https://unpkg.com/@jspsych-contrib/plugin-pipe"></script>
+
+    <link
+      href="https://unpkg.com/jspsych@8.2.1/css/jspsych.css"
+      rel="stylesheet"
+      type="text/css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/@jspsych/plugin-survey@2.1.0/css/survey.css"
+    />
+    <script type="module" src="./js/setup.js"></script>
+    <script type="module" src="./config.mjs"></script>
+  </head>
+  <style>
+    img {
+      -webkit-user-drag: none;
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
+      user-select: none;
+    }
+  </style>
+  <body></body>
+  <script type="module">
+    import { setupGame } from "./js/setup.js";
+    import { settings } from "./config.mjs";
+
+    if (!settings.study_metadata.dev_mode) {
+      document.addEventListener("contextmenu", (event) =>
+        event.preventDefault()
+      );
+      window.onbeforeunload = () => {
+        return "Please do not refresh the page or go back, changes you made may not be saved!";
+      };
+    }
+    setupGame();
+  </script>
+</html>

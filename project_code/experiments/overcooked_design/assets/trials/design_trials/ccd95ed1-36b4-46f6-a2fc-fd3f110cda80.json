@@ -1,0 +1,15 @@
+{
+  "id": "ccd95ed1-36b4-46f6-a2fc-fd3f110cda80",
+  "floor_plan": "-------\nT     -\n-     -\n-     -\n-     -\n*     -\n-1---O-",
+  "furniture": {
+    "grid": [
+      ["-", "-"],
+      ["L", "-"],
+      ["p", "/"]
+    ],
+    "id": "3_on_table__ccd95ed1-36b4-46f6-a2fc-fd3f110cda80",
+    "name": "Table"
+  },
+  "notes": "Intended to differentiate full vs. efficiency-ablation model. Difference intended when making Onion Salad. There are no differences in which placements are feasible between the dishes. This layout has 3 objects on the table.",
+  "created_at": "2025-12-19T17:51:46.929536Z"
+}

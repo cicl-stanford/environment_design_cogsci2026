@@ -1,0 +1,1391 @@
+---
+title: "Environment Design CogSci 2026"
+author: "Justin Yang"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = FALSE,
+                      message = FALSE)
+library(tidyverse)
+library(Hmisc)
+library(patchwork)
+library(ggridges)
+library(loo)
+library(brms)
+library(jsonlite)
+source("utils.R")
+set.seed(42)
+
+# Distance metric functions
+compute_tvd = function(x, y, max_placement = 11) {
+  p = table(factor(x, levels = 0:max_placement)) / length(x)
+  q = table(factor(y, levels = 0:max_placement)) / length(y)
+  0.5 * sum(abs(p - q))
+}
+
+compute_emd = function(x, y, max_placement = 11) {
+  p = table(factor(x, levels = 0:max_placement)) / length(x)
+  q = table(factor(y, levels = 0:max_placement)) / length(y)
+  sum(abs(cumsum(p) - cumsum(q)))
+}
+
+compute_jsd = function(x, y, max_placement = 11) {
+  p = table(factor(x, levels = 0:max_placement)) / length(x)
+  q = table(factor(y, levels = 0:max_placement)) / length(y)
+  epsilon = 1e-10
+  p = (p + epsilon) / sum(p + epsilon)
+  q = (q + epsilon) / sum(q + epsilon)
+  m = (p + q) / 2
+  kl = function(a, b) sum(a * log(a / b))
+  (0.5 * kl(p, m) + 0.5 * kl(q, m)) / log(2)
+}
+
+wilson_ci = function(x, n, conf.level = 0.95) {
+  if (n == 0) return(c(lower = NA, upper = NA))
+  p = x / n
+  z = qnorm(1 - (1 - conf.level) / 2)
+  denom = 1 + z^2 / n
+  center = (p + z^2 / (2 * n)) / denom
+  margin = z * sqrt((p * (1 - p) + z^2 / (4 * n)) / n) / denom
+  c(lower = max(0, center - margin), upper = min(1, center + margin))
+}
+
+report_loo = function(comparison, model_a, model_b, label) {
+  delta = comparison[2, "elpd_diff"]
+  se = comparison[2, "se_diff"]
+  winner = rownames(comparison)[1]
+  supported = (winner == model_a)
+  cat(sprintf("%s: ΔELPD = %.2f (SE = %.2f) — %s\n",
+              label, delta, se, ifelse(supported, "supported", "not supported")))
+  list(delta = delta, se = se, supported = supported)
+}
+
+report_lm = function(fit, label) {
+  r = sqrt(summary(fit)$r.squared)
+  rmse = sqrt(c(crossprod(fit$residuals)) / length(fit$residuals))
+  p = summary(fit)$coefficients[2, "Pr(>|t|)"]
+  cat(sprintf("%s: r = %.3f, RMSE = %.2f, p = %.4f\n", label, r, rmse, p))
+  list(r = r, rmse = rmse, p = p)
+}
+
+report_glm = function(fit, y_obs, label) {
+  pred = predict(fit, type = "response") * 100
+  r = cor(y_obs, pred)
+  rmse = sqrt(mean((y_obs - pred)^2))
+  coefs = summary(fit)$coefficients
+  p_col = grep("^Pr\\(", colnames(coefs), value = TRUE)[1]
+  p = coefs[2, p_col]
+  cat(sprintf("%s: r = %.3f, RMSE = %.2f, p = %.4f\n", label, r, rmse, p))
+  list(r = r, rmse = rmse, p = p, pred = pred)
+}
+```
+
+
+# Data
+
+```{r load_data}
+trial_data = read_csv("../../data/s1_design_inference/behavioral_results/trial_data.csv")
+model_data = read_csv("../../data/s1_design_inference/models/model_results.csv")
+
+# Aggregate model timesteps (min across seeds)
+model_summary = model_data %>%
+  group_by(trial,
+           trial_type,
+           model_agents,
+           model_model,
+           model_recipe) %>%
+  summarise(timesteps = min(timesteps),
+            .groups = "drop")
+
+# Trial subsets
+cooks_trials = sprintf("trial_%02d", 1:18)
+dish_trials = sprintf("trial_%02d", 19:36)
+
+# Helper: aggregate trial-level means with bootstrap CIs
+agg_human = function(data) {
+  data %>%
+    group_by(kitchen_layout_id,
+             question_type) %>%
+    reframe(mean_cl_boot(slider_response)) %>%
+    rename(mean = y,
+           ci_lo = ymin,
+           ci_hi = ymax)
+}
+
+# Effort
+effort_cooks = trial_data %>%
+  filter(condition == "cooks_effort",
+         kitchen_layout_id %in% cooks_trials) %>%
+  agg_human()
+
+effort_dish = trial_data %>%
+  filter(condition == "dish_effort",
+         kitchen_layout_id %in% dish_trials) %>%
+  agg_human()
+
+# Intention
+intent_cooks = trial_data %>%
+  filter(condition == "cooks",
+         kitchen_layout_id %in% cooks_trials) %>%
+  agg_human()
+
+intent_dish = trial_data %>%
+  filter(condition == "dish",
+         kitchen_layout_id %in% dish_trials) %>%
+  agg_human()
+
+# Delta effort: compute at individual level, then aggregate
+delta_effort_dish = trial_data %>%
+  filter(condition == "dish_effort",
+         kitchen_layout_id %in% dish_trials) %>%
+  select(game_id, kitchen_layout_id, question_type, slider_response) %>%
+  pivot_wider(names_from = question_type,
+              values_from = slider_response) %>%
+  mutate(delta_effort = effort_tomato - effort_onion) %>%
+  group_by(kitchen_layout_id) %>%
+  reframe(mean_cl_boot(delta_effort)) %>%
+  rename(delta_effort = y,
+         delta_effort_ci_lo = ymin,
+         delta_effort_ci_hi = ymax)
+
+delta_effort_cooks = trial_data %>%
+  filter(condition == "cooks_effort",
+         kitchen_layout_id %in% cooks_trials) %>%
+  select(game_id, kitchen_layout_id, question_type, slider_response) %>%
+  pivot_wider(names_from = question_type,
+              values_from = slider_response) %>%
+  mutate(delta_effort = effort_one_cook - effort_two_cooks) %>%
+  group_by(kitchen_layout_id) %>%
+  reframe(mean_cl_boot(delta_effort)) %>%
+  rename(delta_effort = y,
+         delta_effort_ci_lo = ymin,
+         delta_effort_ci_hi = ymax)
+```
+
+
+```{r build_wide}
+trials_metadata = read_csv("../../stimuli/s1_design_inference/trials_metadata.csv")
+
+# Model timesteps wide
+ts_dish = model_summary %>%
+  filter(trial_type == "dish") %>%
+  select(trial,
+         model_recipe,
+         timesteps) %>%
+  pivot_wider(names_from = model_recipe,
+              values_from = timesteps) %>%
+  rename(ts_tomato = Salad,
+         ts_onion = SaladOL)
+
+ts_cooks = model_summary %>%
+  filter(trial_type == "cooks",
+         model_recipe == "Salad") %>%
+  select(trial,
+         model_agents,
+         model_model,
+         timesteps) %>%
+  pivot_wider(names_from = c(model_agents, model_model),
+              values_from = timesteps,
+              names_prefix = "ts_") %>%
+  rename(ts_one = ts_1_greedy,
+         ts_gg = ts_2_greedy_greedy,
+         ts_bd = ts_2_bd_bd)
+
+# Pivot effort to wide (separate for each condition)
+effort_dish_wide = effort_dish %>%
+  select(kitchen_layout_id,
+         question_type,
+         mean,
+         ci_lo,
+         ci_hi) %>%
+  pivot_wider(names_from = question_type,
+              values_from = c(mean, ci_lo, ci_hi)) %>%
+  rename_with(~ sub("^mean_", "", .x), starts_with("mean_"))
+
+effort_cooks_wide = effort_cooks %>%
+  select(kitchen_layout_id,
+         question_type,
+         mean,
+         ci_lo,
+         ci_hi) %>%
+  pivot_wider(names_from = question_type,
+              values_from = c(mean, ci_lo, ci_hi)) %>%
+  rename_with(~ sub("^mean_", "", .x), starts_with("mean_"))
+
+# Pivot intention to wide (separate for each condition)
+intent_dish_wide = intent_dish %>%
+  select(kitchen_layout_id,
+         question_type,
+         mean,
+         ci_lo,
+         ci_hi) %>%
+  pivot_wider(names_from = question_type,
+              values_from = c(mean,
+                              ci_lo,
+                              ci_hi))
+
+intent_cooks_wide = intent_cooks %>%
+  select(kitchen_layout_id,
+         question_type,
+         mean,
+         ci_lo,
+         ci_hi) %>%
+  pivot_wider(names_from = question_type,
+              values_from = c(mean,
+                              ci_lo,
+                              ci_hi))
+
+# Build dish-level dataframe
+df_dish = ts_dish %>%
+  left_join(effort_dish_wide,
+            by = c("trial" = "kitchen_layout_id")) %>%
+  left_join(intent_dish_wide,
+            by = c("trial" = "kitchen_layout_id")) %>%
+  left_join(delta_effort_dish,
+            by = c("trial" = "kitchen_layout_id")) %>%
+  mutate(
+    delta_ts = ts_tomato - ts_onion,
+    y_intent = mean_intent_recipe / 100
+  )
+
+# Build cooks-level dataframe
+df_cooks = ts_cooks %>%
+  left_join(effort_cooks_wide,
+            by = c("trial" = "kitchen_layout_id")) %>%
+  left_join(intent_cooks_wide,
+            by = c("trial" = "kitchen_layout_id")) %>%
+  left_join(delta_effort_cooks,
+            by = c("trial" = "kitchen_layout_id")) %>%
+  left_join(trials_metadata %>%
+              select(trial_id, n_chopping_boards),
+            by = c("trial" = "trial_id"))
+```
+
+
+# Study 1: Inferring design intent
+
+## Study 1a: Inferring what dish an environment is designed for
+
+### Effort reflects simulation model
+
+```{r s1a_effort}
+fit_tomato = lm(effort_tomato ~ ts_tomato,
+                data = df_dish %>% filter(ts_tomato < 100))
+stats_tomato = report_lm(fit_tomato, "Tomato")
+
+fit_onion = lm(effort_onion ~ ts_onion,
+               data = df_dish %>% filter(ts_onion < 100))
+stats_onion = report_lm(fit_onion, "Onion")
+```
+
+### Intention reflects relative effort
+
+```{r s1a_intention}
+fit_ei_dish = glm(y_intent ~ delta_effort,
+                  data = df_dish,
+                  family = binomial(), weights = rep(50, nrow(df_dish)))
+stats_ei_dish = report_glm(fit_ei_dish,
+                           df_dish$mean_intent_recipe,
+                           "Intention ~ Relative Effort (dish)")
+
+fit_mi_dish = glm(y_intent ~ delta_ts,
+                  data = df_dish,
+                  family = binomial(), weights = rep(50, nrow(df_dish)))
+stats_mi_dish = report_glm(fit_mi_dish,
+                           df_dish$mean_intent_recipe,
+                           "Intention ~ Relative Timesteps (dish)")
+```
+
+## Study 1b: Inferring how many cooks an environment is designed for
+
+### Effort reflects simulation model
+
+```{r s1b_effort}
+df_cooks_one = df_cooks %>% filter(ts_one < 100)
+df_cooks_two = df_cooks %>% filter(ts_gg < 100, ts_bd < 100)
+
+# One cook
+fit_one = lm(effort_one_cook ~ ts_one,
+             data = df_cooks_one)
+stats_one = report_lm(fit_one, "One Cook")
+
+# Two cooks - individual agent types
+fit_gg = lm(effort_two_cooks ~ ts_gg,
+            data = df_cooks_two)
+stats_gg = report_lm(fit_gg, "Greedy-Greedy")
+
+fit_bd = lm(effort_two_cooks ~ ts_bd,
+            data = df_cooks_two)
+stats_bd = report_lm(fit_bd, "BD-BD")
+
+# Two cooks - MLE mixture
+neg_loglik = function(w, data) {
+  ts_mix = w * data$ts_bd + (1 - w) * data$ts_gg
+  -as.numeric(logLik(lm(data$effort_two_cooks ~ ts_mix)))
+}
+w_mle = optim(0.5,
+              neg_loglik,
+              data = df_cooks_two,
+              method = "Brent",
+              lower = 0,
+              upper = 1)$par
+
+df_cooks_two$ts_mixture = w_mle * df_cooks_two$ts_bd + (1 - w_mle) * df_cooks_two$ts_gg
+fit_mix = lm(effort_two_cooks ~ ts_mixture,
+             data = df_cooks_two)
+stats_mix = report_lm(fit_mix, sprintf("MLE Mixture (w = %.3f)", w_mle))
+```
+
+### Intention reflects relative effort
+
+```{r s1b_intention}
+df_cooks = df_cooks %>%
+  mutate(
+    delta_ts = ts_one - ts_bd,
+    y_intent = mean_intent_agents / 100
+  )
+
+fit_ei_cooks = glm(y_intent ~ delta_effort,
+                   data = df_cooks,
+                   family = binomial(), weights = rep(50, nrow(df_cooks)))
+stats_ei_cooks = report_glm(fit_ei_cooks,
+                            df_cooks$mean_intent_agents,
+                            "Intention ~ Relative Effort (cooks)")
+
+fit_mi_cooks = glm(y_intent ~ delta_ts,
+                   data = df_cooks,
+                   family = binomial(), weights = rep(50, nrow(df_cooks)))
+stats_mi_cooks = report_glm(fit_mi_cooks,
+                            df_cooks$mean_intent_agents,
+                            "Intention ~ Relative Timesteps (cooks)")
+
+# Heuristic: effort + chopping boards
+fit_heuristic_effort = glm(y_intent ~ delta_effort + n_chopping_boards,
+                           data = df_cooks,
+                           family = binomial(), weights = rep(50, nrow(df_cooks)))
+stats_heuristic_effort = report_glm(fit_heuristic_effort,
+                                    df_cooks$mean_intent_agents,
+                                    "Intention ~ Relative Effort + Chopping Boards (cooks)")
+
+# Heuristic: model + chopping boards
+fit_heuristic = glm(y_intent ~ delta_ts + n_chopping_boards,
+                    data = df_cooks,
+                    family = binomial(), weights = rep(50, nrow(df_cooks)))
+stats_heuristic = report_glm(fit_heuristic,
+                             df_cooks$mean_intent_agents,
+                             "Intention ~ Relative Timesteps + Chopping Boards (cooks)")
+
+```
+
+## Study 1 Visualizations
+
+```{r s1_plots, fig.width=28, fig.height=5}
+# --- Prepare combined effort data ---
+effort_dish_combined = bind_rows(
+  df_dish %>%
+    filter(ts_tomato < 100) %>%
+    transmute(trial,
+              model_prediction = predict(fit_tomato),
+              mean_human = effort_tomato,
+              ci_lower = ci_lo_effort_tomato,
+              ci_upper = ci_hi_effort_tomato,
+              dish_type = "Tomato"),
+  df_dish %>%
+    filter(ts_onion < 100) %>%
+    transmute(trial,
+              model_prediction = predict(fit_onion),
+              mean_human = effort_onion,
+              ci_lower = ci_lo_effort_onion,
+              ci_upper = ci_hi_effort_onion,
+              dish_type = "Onion")
+) %>%
+  mutate(dish_type = factor(dish_type, levels = c("Tomato", "Onion")))
+
+effort_cooks_combined = bind_rows(
+  df_cooks_one %>%
+    transmute(trial,
+              model_prediction = predict(fit_one),
+              mean_human = effort_one_cook,
+              ci_lower = ci_lo_effort_one_cook,
+              ci_upper = ci_hi_effort_one_cook,
+              cook_type = "One"),
+  df_cooks_two %>%
+    transmute(trial,
+              model_prediction = predict(fit_mix),
+              mean_human = effort_two_cooks,
+              ci_lower = ci_lo_effort_two_cooks,
+              ci_upper = ci_hi_effort_two_cooks,
+              cook_type = "Two")
+) %>%
+  mutate(cook_type = factor(cook_type, levels = c("One", "Two")))
+
+# --- Prepare intention data ---
+df_dish = df_dish %>%
+  mutate(effort_pred = stats_ei_dish$pred)
+
+df_cooks = df_cooks %>%
+  mutate(effort_pred = stats_ei_cooks$pred,
+         heuristic_pred = stats_heuristic$pred)
+
+# --- Plots ---
+p_dish_effort = make_grouped_scatterplot(
+  data = effort_dish_combined,
+  x_var = "model_prediction",
+  y_var = "mean_human",
+  group_var = "dish_type",
+  x_label = "Model Effort",
+  y_label = "Human Effort",
+  color = color_palette$dish_light,
+  ci_color = "#eab4ac",
+  shape_values = c(21, 24),
+  group_labels = c("Tomato Salad", "Onion Salad"),
+  add_ci_y = TRUE,
+  legend_position = c(0.75, 0.15)
+)
+
+p_dish_intent = make_scatterplot(
+  data = df_dish,
+  x_var = "effort_pred",
+  y_var = "mean_intent_recipe",
+  x_label = "Relative Effort",
+  y_label = "Intended Dish",
+  color = color_palette$dish_intention,
+  ci_color = "#d67569",
+  y_ci_lower = "ci_lo_intent_recipe",
+  y_ci_upper = "ci_hi_intent_recipe"
+)
+
+p_cooks_effort = make_grouped_scatterplot(
+  data = effort_cooks_combined,
+  x_var = "model_prediction",
+  y_var = "mean_human",
+  group_var = "cook_type",
+  x_label = "Model Effort",
+  y_label = "Human Effort",
+  color = color_palette$cooks_light,
+  ci_color = "#b3e4f7",
+  shape_values = c(21, 24),
+  group_labels = c("One Cook", "Two Cooks"),
+  add_ci_y = TRUE,
+  legend_position = c(0.75, 0.15)
+)
+
+p_cooks_intent = make_scatterplot(
+  data = df_cooks,
+  x_var = "effort_pred",
+  y_var = "mean_intent_agents",
+  x_label = "Relative Effort",
+  y_label = "Intended Cooks",
+  color = color_palette$cooks_intention,
+  ci_color = "#75a9e1",
+  y_ci_lower = "ci_lo_intent_agents",
+  y_ci_upper = "ci_hi_intent_agents"
+)
+
+p_cooks_heuristic = make_scatterplot(
+  data = df_cooks,
+  x_var = "heuristic_pred",
+  y_var = "mean_intent_agents",
+  x_label = "Effort + Chopping Boards",
+  y_label = "Intended Cooks",
+  color = color_palette$cooks_intention,
+  ci_color = "#75a9e1",
+  y_ci_lower = "ci_lo_intent_agents",
+  y_ci_upper = "ci_hi_intent_agents"
+)
+
+# Highlight specific trials: trial_21 (dish), trial_16 (cooks)
+highlight_trial = function(p, data, x_var, y_var, trial_name, color,
+                           size_mult = 1, stroke_mult = 4,
+                           group_var = NULL, shape_values = c(21, 24)) {
+  hl = data %>% filter(trial == trial_name)
+  if (nrow(hl) == 0) return(p)
+  if (!is.null(group_var)) {
+    p + geom_point(data = hl, aes(x = .data[[x_var]], y = .data[[y_var]],
+                                   shape = .data[[group_var]]),
+                   size = 5 * size_mult, fill = color, color = "black",
+                   stroke = 0.5 * stroke_mult)
+  } else {
+    p + geom_point(data = hl, aes(x = .data[[x_var]], y = .data[[y_var]]),
+                   size = 5 * size_mult, shape = 21, fill = color, color = "black",
+                   stroke = 0.5 * stroke_mult)
+  }
+}
+
+p_dish_effort = highlight_trial(p_dish_effort, effort_dish_combined, "model_prediction", "mean_human",
+                                 "trial_21", color_palette$dish_light,
+                                 group_var = "dish_type")
+p_dish_intent = highlight_trial(p_dish_intent, df_dish, "effort_pred", "mean_intent_recipe",
+                                 "trial_21", color_palette$dish_intention)
+p_cooks_effort = highlight_trial(p_cooks_effort, effort_cooks_combined, "model_prediction", "mean_human",
+                                  "trial_16", color_palette$cooks_light,
+                                  group_var = "cook_type")
+p_cooks_intent = highlight_trial(p_cooks_intent, df_cooks, "effort_pred", "mean_intent_agents",
+                                  "trial_16", color_palette$cooks_intention)
+p_cooks_heuristic = highlight_trial(p_cooks_heuristic, df_cooks, "heuristic_pred", "mean_intent_agents",
+                                     "trial_16", color_palette$cooks_intention)
+
+# Combined with spacers matching analysis-brms layout
+p_combined = p_dish_effort + plot_spacer() + p_dish_intent + plot_spacer() +
+             p_cooks_effort + plot_spacer() + p_cooks_intent + plot_spacer() + p_cooks_heuristic +
+             plot_layout(nrow = 1, widths = c(1, 0.0, 1, 0.2, 1, 0.0, 1, 0.0, 1))
+p_combined
+
+ggsave("../../figures/s1_design_inference/raw/inference_study_results_raw.pdf",
+       p_combined, width = 28, height = 4.9, device = cairo_pdf)
+```
+
+
+# Study 2: Designing the environment
+
+```{r s2_load_data}
+S2_CACHE_DIR = "../../data/overcooked_design/model_cache"
+
+# Load LOO objects
+loo_files = list(
+  base_full = "loo_base_full.rds",
+  base_oracle = "loo_base_oracle.rds",
+  base_inference_ablation = "loo_base_inference_ablation.rds",
+  base_efficiency_ablation = "loo_base_efficiency_ablation.rds",
+  comm_full = "loo_communicative_full.rds",
+  comm_oracle = "loo_communicative_oracle.rds",
+  comm_inference_ablation = "loo_communicative_inference_ablation.rds",
+  comm_efficiency_ablation = "loo_communicative_efficiency_ablation.rds",
+  baseline = "loo_baseline.rds"
+)
+
+loo_base = list()
+loo_comm = list()
+
+for (name in names(loo_files)) {
+  path = file.path(S2_CACHE_DIR, loo_files[[name]])
+  if (!file.exists(path)) { cat(sprintf("MISSING: %s\n", name)); next }
+  loo_obj = readRDS(path)
+  if (grepl("^base_", name)) {
+    loo_base[[sub("^base_", "", name)]] = loo_obj
+  } else if (grepl("^comm_", name)) {
+    loo_comm[[sub("^comm_", "", name)]] = loo_obj
+  } else {
+    loo_baseline = loo_obj
+  }
+}
+
+# Extract beta estimates from fits
+fit_files = list(
+  base_full = "brms_fit_base_full.rds",
+  base_oracle = "brms_fit_base_oracle.rds",
+  base_inference_ablation = "brms_fit_base_inference_ablation.rds",
+  base_efficiency_ablation = "brms_fit_base_efficiency_ablation.rds",
+  comm_full = "brms_fit_communicative_full.rds",
+  comm_oracle = "brms_fit_communicative_oracle.rds",
+  comm_inference_ablation = "brms_fit_communicative_inference_ablation.rds",
+  comm_efficiency_ablation = "brms_fit_communicative_efficiency_ablation.rds"
+)
+
+s2_models = c("full", "oracle", "inference_ablation", "efficiency_ablation")
+s2_conditions = c("base", "communicative")
+
+params_s2 = tibble(model = character(), condition = character(),
+                   beta = numeric(), beta_lower = numeric(), beta_upper = numeric(),
+                   elpd = numeric(), se = numeric())
+
+for (cond in s2_conditions) {
+  for (mod in s2_models) {
+    key = if (cond == "base") paste0("base_", mod) else paste0("comm_", mod)
+    fit_path = file.path(S2_CACHE_DIR, fit_files[[key]])
+    loo_key = if (cond == "base") loo_base[[mod]] else loo_comm[[mod]]
+
+    if (!file.exists(fit_path) || is.null(loo_key)) next
+
+    fit = readRDS(fit_path)
+    fe = fixef(fit)
+
+    if ("U" %in% rownames(fe)) {
+      bv = fe["U", "Estimate"]; bl = fe["U", "Q2.5"]; bu = fe["U", "Q97.5"]
+    } else if ("beta_Intercept" %in% rownames(fe)) {
+      bv = fe["beta_Intercept", "Estimate"]; bl = fe["beta_Intercept", "Q2.5"]; bu = fe["beta_Intercept", "Q97.5"]
+    } else {
+      bv = bl = bu = NA
+    }
+
+    params_s2 = params_s2 %>% add_row(
+      model = mod, condition = cond,
+      beta = bv, beta_lower = bl, beta_upper = bu,
+      elpd = loo_key$estimates["elpd_loo", "Estimate"],
+      se = loo_key$estimates["elpd_loo", "SE"]
+    )
+    rm(fit); gc(verbose = FALSE)
+  }
+}
+
+cat("Beta estimates:\n")
+params_s2 %>%
+  mutate(summary = sprintf("β = %.4f [%.4f, %.4f], ELPD = %.1f (%.1f)",
+                           beta, beta_lower, beta_upper, elpd, se)) %>%
+  select(condition, model, summary) %>%
+  print()
+
+# Preprocess Study 2 data from CSVs
+S2_DATA_DIR = "../../data/overcooked_design"
+
+df.design = read_csv(file.path(S2_DATA_DIR, "behavioral_results", "design_data.csv"),
+                     show_col_types = FALSE)
+df.session = read_csv(file.path(S2_DATA_DIR, "behavioral_results", "session_data.csv"),
+                      show_col_types = FALSE)
+df.utilities = read_csv(file.path(S2_DATA_DIR, "model_results", "placement_utilities.csv"),
+                        show_col_types = FALSE)
+
+# Extract placement coordinates from JSON and compute placement_id
+# Row-major enumeration in 3x4 design grid: id = row * 4 + col
+df.design = df.design %>%
+  mutate(
+    placements_parsed = map(placements, fromJSON),
+    placement_x = map_dbl(placements_parsed, ~.x$location$x[1]),
+    placement_y = map_dbl(placements_parsed, ~.x$location$y[1]),
+    placement_id = (placement_y - 1) * 4 + (placement_x - 1)
+  ) %>%
+  left_join(df.session %>% select(game_id, condition), by = "game_id")
+
+# Wide format: one row per design trial
+df.analysis = df.design %>%
+  select(game_id, condition, trial_id, config_filename, dish,
+         placement_id, placement_x, placement_y) %>%
+  mutate(
+    config_id = str_remove(config_filename, "\\.json$"),
+    dish_model = recode(dish, "Salad" = "TomatoSalad", "SaladOL" = "OnionSalad"),
+    design_problem = interaction(config_id, dish_model, sep = "_")
+  )
+
+# Long format: 12 rows per trial (one per placement alternative)
+df.long = df.analysis %>%
+  crossing(placement_alternative = 0:11) %>%
+  left_join(
+    df.utilities %>%
+      select(config_id, dish, placement_id,
+             U_full, U_oracle,
+             U_inf_abl = U_inference_ablation,
+             U_eff_abl = U_efficiency_ablation),
+    by = c("config_id", "dish_model" = "dish",
+           "placement_alternative" = "placement_id")
+  ) %>%
+  mutate(
+    y = as.integer(placement_alternative == placement_id),
+    baseline = 1/12,
+    choice_occasion = paste(game_id, design_problem, sep = "_")
+  ) %>%
+  arrange(choice_occasion, placement_alternative)
+
+# Utility column mapping (used by accuracy computation)
+utility_cols = c(full = "U_full", oracle = "U_oracle",
+                 inference_ablation = "U_inf_abl", efficiency_ablation = "U_eff_abl")
+
+# Compute top-1 accuracy per model × condition
+compute_model_accuracy_bootstrap = function(df.long, df.analysis, beta_val, utility_col,
+                                            condition_filter, n_bootstrap = 100, seed = 42) {
+  set.seed(seed)
+  model_predictions = df.long %>%
+    filter(condition == condition_filter) %>%
+    group_by(design_problem, choice_occasion) %>%
+    mutate(exp_bu = exp(beta_val * !!sym(utility_col)),
+           model_prob = exp_bu / sum(exp_bu)) %>%
+    slice_max(model_prob, n = 1, with_ties = FALSE) %>%
+    ungroup() %>%
+    select(design_problem, choice_occasion, predicted_placement = placement_alternative)
+
+  human_choices = df.analysis %>%
+    filter(condition == condition_filter) %>%
+    select(game_id, design_problem, actual_placement = placement_id)
+
+  accuracy_by_trial = human_choices %>%
+    left_join(model_predictions %>% select(design_problem, predicted_placement) %>% distinct(),
+              by = "design_problem") %>%
+    group_by(design_problem) %>%
+    summarise(n_correct = sum(actual_placement == predicted_placement),
+              n_total = n(), accuracy = n_correct / n_total, .groups = "drop")
+
+  overall_accuracy = sum(accuracy_by_trial$n_correct) / sum(accuracy_by_trial$n_total)
+  n_trials = nrow(accuracy_by_trial)
+
+  bootstrap_accs = replicate(n_bootstrap, {
+    idx = sample(1:n_trials, n_trials, replace = TRUE)
+    resampled = accuracy_by_trial[idx, ]
+    sum(resampled$n_correct) / sum(resampled$n_total)
+  })
+
+  tibble(condition = condition_filter, accuracy = overall_accuracy,
+         ci_lower = quantile(bootstrap_accs, 0.025),
+         ci_upper = quantile(bootstrap_accs, 0.975))
+}
+
+model_accs_s2 = tibble()
+for (cond in s2_conditions) {
+  for (mod in s2_models) {
+    beta_val = params_s2 %>% filter(model == mod, condition == cond) %>% pull(beta)
+    if (length(beta_val) == 0 || is.na(beta_val)) next
+    ucol = utility_cols[[mod]]
+    if (!(ucol %in% names(df.long))) next
+    result = compute_model_accuracy_bootstrap(df.long, df.analysis, beta_val, ucol, cond) %>%
+      mutate(model = mod)
+    model_accs_s2 = bind_rows(model_accs_s2, result)
+  }
+  model_accs_s2 = bind_rows(model_accs_s2,
+    tibble(condition = cond, model = "uniform",
+           accuracy = 1/12, ci_lower = 1/12, ci_upper = 1/12))
+}
+
+# Split-half ceiling (accuracy)
+acc_ceiling_cache = file.path(S2_CACHE_DIR, "split_half_accuracy_ceiling.rds")
+if (file.exists(acc_ceiling_cache)) {
+  ceiling_acc_s2 = readRDS(acc_ceiling_cache)
+} else {
+  cat("Computing split-half accuracy ceiling (100 bootstrap iterations)...\n")
+  compute_split_half_accuracy = function(df.analysis, n_bootstrap = 100, seed = 42) {
+    set.seed(seed)
+    trial_data = df.analysis %>%
+      select(game_id, condition, design_problem, placement_id) %>%
+      rename(participant_id = game_id)
+    bootstrap_results = vector("list", n_bootstrap)
+    for (b in 1:n_bootstrap) {
+      if (b %% 20 == 0) cat(sprintf("  Bootstrap %d/%d\n", b, n_bootstrap))
+      acc_by_cond = trial_data %>%
+        group_by(condition, design_problem) %>%
+        group_modify(function(df, keys) {
+          participants = unique(df$participant_id)
+          n_part = length(participants)
+          if (n_part < 4) return(tibble(n_correct = NA_integer_, n_total = NA_integer_))
+          split_idx = sample(1:n_part, size = floor(n_part / 2))
+          group_a = participants[split_idx]
+          group_b = participants[-split_idx]
+          a_choices = df %>% filter(participant_id %in% group_a)
+          a_mode = a_choices %>% count(placement_id) %>%
+            slice_max(n, n = 1, with_ties = FALSE) %>% pull(placement_id)
+          b_choices = df %>% filter(participant_id %in% group_b)
+          n_correct_a_to_b = sum(b_choices$placement_id == a_mode)
+          b_mode = b_choices %>% count(placement_id) %>%
+            slice_max(n, n = 1, with_ties = FALSE) %>% pull(placement_id)
+          n_correct_b_to_a = sum(a_choices$placement_id == b_mode)
+          tibble(n_correct = as.integer(n_correct_a_to_b + n_correct_b_to_a),
+                 n_total = as.integer(nrow(a_choices) + nrow(b_choices)))
+        }) %>%
+        ungroup() %>%
+        group_by(condition) %>%
+        summarise(accuracy = sum(n_correct, na.rm = TRUE) / sum(n_total, na.rm = TRUE),
+                  n_trials = sum(!is.na(n_correct)), .groups = "drop")
+      bootstrap_results[[b]] = acc_by_cond
+    }
+    bootstrap_df = bind_rows(bootstrap_results, .id = "bootstrap")
+    bootstrap_df %>%
+      group_by(condition) %>%
+      summarise(ci_lower = quantile(accuracy, 0.025),
+                ci_upper = quantile(accuracy, 0.975),
+                accuracy = mean(accuracy),
+                n_design_problems = mean(n_trials), .groups = "drop") %>%
+      mutate(model = "split_half")
+  }
+  ceiling_acc_s2 = compute_split_half_accuracy(df.analysis, n_bootstrap = 100)
+  saveRDS(ceiling_acc_s2, acc_ceiling_cache)
+  cat(sprintf("Saved to: %s\n", acc_ceiling_cache))
+}
+```
+
+## Study 2a: Designing for a knowledgeable user
+
+### Discriminability of design intent
+
+```{r s2a_discriminability}
+# H0a (base): dish discriminability within base condition
+h0a_cache = file.path(S2_CACHE_DIR, "h0a_results.rds")
+if (file.exists(h0a_cache)) {
+  h0a_results = readRDS(h0a_cache)
+  h0a_pvalues = h0a_results$pvalues
+  h0a_summary = h0a_results$summary
+} else {
+  cat("h0a_results.rds not found — computing...\n")
+  observed_dish_distances = df.analysis %>%
+    group_by(trial_id, condition) %>%
+    summarise(
+      emd = compute_emd(placement_id[dish_model == "TomatoSalad"],
+                        placement_id[dish_model == "OnionSalad"]),
+      tvd = compute_tvd(placement_id[dish_model == "TomatoSalad"],
+                        placement_id[dish_model == "OnionSalad"]),
+      jsd = compute_jsd(placement_id[dish_model == "TomatoSalad"],
+                        placement_id[dish_model == "OnionSalad"]),
+      .groups = "drop")
+
+  n_perm = 1000
+  perm_results = replicate(n_perm, {
+    df_perm = df.analysis %>%
+      group_by(game_id, trial_id) %>%
+      mutate(dish_model = sample(dish_model)) %>%
+      ungroup()
+    df_perm %>%
+      group_by(trial_id, condition) %>%
+      summarise(
+        emd = compute_emd(placement_id[dish_model == "TomatoSalad"],
+                          placement_id[dish_model == "OnionSalad"]),
+        tvd = compute_tvd(placement_id[dish_model == "TomatoSalad"],
+                          placement_id[dish_model == "OnionSalad"]),
+        jsd = compute_jsd(placement_id[dish_model == "TomatoSalad"],
+                          placement_id[dish_model == "OnionSalad"]),
+        .groups = "drop")
+  }, simplify = FALSE)
+
+  h0a_pvalues = observed_dish_distances %>%
+    rowwise() %>%
+    mutate(
+      p_tvd = mean(sapply(perm_results, function(x) {
+        m = x %>% filter(trial_id == .env$trial_id, condition == .env$condition)
+        if (nrow(m) > 0) m$tvd >= tvd else NA
+      })),
+      p_emd = mean(sapply(perm_results, function(x) {
+        m = x %>% filter(trial_id == .env$trial_id, condition == .env$condition)
+        if (nrow(m) > 0) m$emd >= emd else NA
+      })),
+      p_jsd = mean(sapply(perm_results, function(x) {
+        m = x %>% filter(trial_id == .env$trial_id, condition == .env$condition)
+        if (nrow(m) > 0) m$jsd >= jsd else NA
+      }))
+    ) %>% ungroup()
+
+  h0a_summary = h0a_pvalues %>%
+    group_by(condition) %>%
+    summarise(
+      mean_tvd = mean(tvd), mean_emd = mean(emd), mean_jsd = mean(jsd),
+      sig_tvd = sum(p_tvd < 0.05), sig_emd = sum(p_emd < 0.05), sig_jsd = sum(p_jsd < 0.05),
+      p_combined_tvd = pchisq(-2 * sum(log(p_tvd)), df = 2 * n(), lower.tail = FALSE),
+      p_combined_emd = pchisq(-2 * sum(log(p_emd)), df = 2 * n(), lower.tail = FALSE),
+      p_combined_jsd = pchisq(-2 * sum(log(p_jsd)), df = 2 * n(), lower.tail = FALSE),
+      n_layouts = n(), .groups = "drop")
+
+  # Per-permutation mean TVD by condition (for null distribution plot)
+  h0a_null_tvd = tibble(
+    perm = rep(seq_len(n_perm), each = 2),
+    condition = rep(c("base", "communicative"), n_perm),
+    mean_tvd = unlist(lapply(perm_results, function(x) {
+      x %>% group_by(condition) %>% summarise(m = mean(tvd), .groups = "drop") %>%
+        arrange(condition) %>% pull(m)
+    }))
+  )
+
+  h0a_results = list(observed = observed_dish_distances, pvalues = h0a_pvalues,
+                      summary = h0a_summary, null_tvd = h0a_null_tvd)
+  saveRDS(h0a_results, h0a_cache)
+}
+
+h0a_null_tvd = h0a_results$null_tvd
+# Recompute if cache predates null_tvd field
+if (is.null(h0a_null_tvd)) {
+  file.remove(h0a_cache)
+  stop("h0a cache missing null_tvd — deleted cache, please re-knit to recompute")
+}
+
+h0a_base = h0a_summary %>% filter(condition == "base")
+cat(sprintf("H0a (base): mean TVD = %.3f, mean EMD = %.3f, mean JSD = %.3f\n",
+            h0a_base$mean_tvd, h0a_base$mean_emd, h0a_base$mean_jsd))
+cat(sprintf("  Fisher combined p: TVD = %.4f, EMD = %.4f, JSD = %.4f\n",
+            h0a_base$p_combined_tvd, h0a_base$p_combined_emd, h0a_base$p_combined_jsd))
+cat(sprintf("  Significant layouts (p < .05): TVD = %d/%d, EMD = %d/%d, JSD = %d/%d\n",
+            h0a_base$sig_tvd, h0a_base$n_layouts,
+            h0a_base$sig_emd, h0a_base$n_layouts,
+            h0a_base$sig_jsd, h0a_base$n_layouts))
+```
+
+### Efficiency matters (H1: Oracle > Uniform)
+
+```{r s2_h1}
+loo_compare_h1 = loo_compare(list(oracle = loo_base[["oracle"]], baseline = loo_baseline))
+h1_stats = report_loo(loo_compare_h1, "oracle", "baseline", "H1: Oracle > Uniform (base)")
+```
+
+### Oracle outperforms Full model (H2a)
+
+```{r s2_h2a}
+loo_compare_h2a = loo_compare(list(oracle = loo_base[["oracle"]], full = loo_base[["full"]]))
+h2a_stats = report_loo(loo_compare_h2a, "oracle", "full", "H2a: Oracle > Full (base)")
+```
+
+## Study 2b: Designing for a user who doesn't know what to do
+
+### Discriminability of design intent
+
+```{r s2b_discriminability}
+# H0a (communicative)
+h0a_comm = h0a_summary %>% filter(condition == "communicative")
+cat(sprintf("H0a (communicative): mean TVD = %.3f, mean EMD = %.3f, mean JSD = %.3f\n",
+            h0a_comm$mean_tvd, h0a_comm$mean_emd, h0a_comm$mean_jsd))
+cat(sprintf("  Fisher combined p: TVD = %.4f, EMD = %.4f, JSD = %.4f\n",
+            h0a_comm$p_combined_tvd, h0a_comm$p_combined_emd, h0a_comm$p_combined_jsd))
+cat(sprintf("  Significant layouts (p < .05): TVD = %d/%d, EMD = %d/%d, JSD = %d/%d\n",
+            h0a_comm$sig_tvd, h0a_comm$n_layouts,
+            h0a_comm$sig_emd, h0a_comm$n_layouts,
+            h0a_comm$sig_jsd, h0a_comm$n_layouts))
+
+# H0b: condition discriminability (base vs communicative)
+h0b_cache = file.path(S2_CACHE_DIR, "h0b_results.rds")
+if (file.exists(h0b_cache)) {
+  h0b_results = readRDS(h0b_cache)
+  h0b_summary = h0b_results$summary
+} else {
+  cat("h0b_results.rds not found — computing...\n")
+  observed_condition_distances = df.analysis %>%
+    group_by(trial_id, dish_model) %>%
+    summarise(
+      emd = compute_emd(placement_id[condition == "base"], placement_id[condition == "communicative"]),
+      tvd = compute_tvd(placement_id[condition == "base"], placement_id[condition == "communicative"]),
+      jsd = compute_jsd(placement_id[condition == "base"], placement_id[condition == "communicative"]),
+      .groups = "drop")
+
+  n_perm = 1000
+  perm_results = replicate(n_perm, {
+    df_perm = df.analysis %>% mutate(condition = sample(condition))
+    df_perm %>%
+      group_by(trial_id, dish_model) %>%
+      summarise(
+        emd = compute_emd(placement_id[condition == "base"], placement_id[condition == "communicative"]),
+        tvd = compute_tvd(placement_id[condition == "base"], placement_id[condition == "communicative"]),
+        jsd = compute_jsd(placement_id[condition == "base"], placement_id[condition == "communicative"]),
+        .groups = "drop")
+  }, simplify = FALSE)
+
+  h0b_pvalues = observed_condition_distances %>%
+    rowwise() %>%
+    mutate(
+      p_tvd = mean(sapply(perm_results, function(x) {
+        m = x %>% filter(trial_id == .env$trial_id, dish_model == .env$dish_model)
+        if (nrow(m) > 0) m$tvd >= tvd else NA
+      })),
+      p_emd = mean(sapply(perm_results, function(x) {
+        m = x %>% filter(trial_id == .env$trial_id, dish_model == .env$dish_model)
+        if (nrow(m) > 0) m$emd >= emd else NA
+      })),
+      p_jsd = mean(sapply(perm_results, function(x) {
+        m = x %>% filter(trial_id == .env$trial_id, dish_model == .env$dish_model)
+        if (nrow(m) > 0) m$jsd >= jsd else NA
+      }))
+    ) %>% ungroup()
+
+  h0b_summary = h0b_pvalues %>%
+    summarise(
+      mean_tvd = mean(tvd), mean_emd = mean(emd), mean_jsd = mean(jsd),
+      sig_tvd = sum(p_tvd < 0.05), sig_emd = sum(p_emd < 0.05), sig_jsd = sum(p_jsd < 0.05),
+      p_combined_tvd = pchisq(-2 * sum(log(p_tvd)), df = 2 * n(), lower.tail = FALSE),
+      p_combined_emd = pchisq(-2 * sum(log(p_emd)), df = 2 * n(), lower.tail = FALSE),
+      p_combined_jsd = pchisq(-2 * sum(log(p_jsd)), df = 2 * n(), lower.tail = FALSE),
+      n_layouts = n(), .groups = "drop")
+
+  h0b_null_tvd = tibble(
+    perm = seq_len(n_perm),
+    mean_tvd = sapply(perm_results, function(x) mean(x$tvd))
+  )
+
+  h0b_results = list(observed = observed_condition_distances, pvalues = h0b_pvalues,
+                      summary = h0b_summary, null_tvd = h0b_null_tvd)
+  saveRDS(h0b_results, h0b_cache)
+}
+
+h0b_null_tvd = h0b_results$null_tvd
+if (is.null(h0b_null_tvd)) {
+  file.remove(h0b_cache)
+  stop("h0b cache missing null_tvd — deleted cache, please re-knit to recompute")
+}
+
+cat(sprintf("\nH0b (base vs communicative): mean TVD = %.3f, mean EMD = %.3f, mean JSD = %.3f\n",
+            h0b_summary$mean_tvd, h0b_summary$mean_emd, h0b_summary$mean_jsd))
+cat(sprintf("  Fisher combined p: TVD = %.4f, EMD = %.4f, JSD = %.4f\n",
+            h0b_summary$p_combined_tvd, h0b_summary$p_combined_emd, h0b_summary$p_combined_jsd))
+cat(sprintf("  Significant layout-dish pairs (p < .05): TVD = %d/%d, EMD = %d/%d, JSD = %d/%d\n",
+            h0b_summary$sig_tvd, h0b_summary$n_layouts,
+            h0b_summary$sig_emd, h0b_summary$n_layouts,
+            h0b_summary$sig_jsd, h0b_summary$n_layouts))
+```
+
+### Discriminability visualization
+
+```{r s2_discriminability_plot, fig.width=8, fig.height=3.4}
+# Observed mean TVD for each test
+obs_tvd = tibble(
+  test = c("Dish (known-goal)", "Dish (unknown-goal)", "Condition"),
+  observed = c(h0a_base$mean_tvd, h0a_comm$mean_tvd, h0b_summary$mean_tvd)
+)
+
+# Null distribution 95% CIs from permutation tests
+null_base = h0a_null_tvd %>% filter(condition == "base") %>% pull(mean_tvd)
+null_comm = h0a_null_tvd %>% filter(condition == "communicative") %>% pull(mean_tvd)
+null_cond = h0b_null_tvd %>% pull(mean_tvd)
+
+# Build null distribution data for density ridges
+null_dist = bind_rows(
+  tibble(test = "Dish (known-goal)", tvd = null_base),
+  tibble(test = "Dish (unknown-goal)", tvd = null_comm),
+  tibble(test = "Condition", tvd = null_cond)
+) %>%
+  mutate(test = factor(test, levels = c("Condition", "Dish (unknown-goal)", "Dish (known-goal)")))
+
+obs_tvd = obs_tvd %>%
+  mutate(test = factor(test, levels = c("Condition", "Dish (unknown-goal)", "Dish (known-goal)")))
+
+p_discrim = ggplot() +
+  geom_hline(yintercept = 1:3, linewidth = 0.5, color = "#A8B1B2") +
+  # Null distribution density (horizontal violin/ridgeline)
+  ggridges::geom_density_ridges(
+    data = null_dist, aes(x = tvd, y = test),
+    fill = "#A8B1B2", color = "#A8B1B2", alpha = 0.4,
+    scale = 0.7, bandwidth = 0.003
+  ) +
+  # Observed mean TVD
+  geom_point(data = obs_tvd, aes(x = observed, y = test),
+             size = 5, shape = 21, fill = "#d67569", color = "black", stroke = 0.5) +
+  labs(x = "Mean TVD", y = NULL) +
+  scale_x_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05))) +
+  plot_theme +
+  theme(axis.text.y = element_text(size = 24, face = "plain", family = "Helvetica Neue",
+                                    color = "#5E5E5E", margin = margin(r = 0.5, unit = "line")),
+        axis.title.x = element_text(size = 24, face = "plain", family = "Helvetica Neue",
+                                     color = "#5E5E5E"))
+
+p_discrim
+
+ggsave("../../figures/overcooked_design/raw/design_study_permutation_raw.pdf",
+       p_discrim, width = 8, height = 3.4, device = cairo_pdf)
+```
+
+### Full model outperforms Oracle (H2b)
+
+```{r s2_h2b}
+loo_compare_h2b = loo_compare(list(full = loo_comm[["full"]], oracle = loo_comm[["oracle"]]))
+h2b_stats = report_loo(loo_compare_h2b, "full", "oracle", "H2b: Full > Oracle (communicative)")
+```
+
+### Ablation tests (H3)
+
+```{r s2_h3}
+# H3a: Full > Inference Ablation
+loo_compare_h3a = loo_compare(list(full = loo_comm[["full"]],
+                                   inference_ablation = loo_comm[["inference_ablation"]]))
+h3a_stats = report_loo(loo_compare_h3a, "full", "inference_ablation",
+                        "H3a: Full > Inference Ablation (communicative)")
+
+# H3b: Full > Efficiency Ablation
+loo_compare_h3b = loo_compare(list(full = loo_comm[["full"]],
+                                   efficiency_ablation = loo_comm[["efficiency_ablation"]]))
+h3b_stats = report_loo(loo_compare_h3b, "full", "efficiency_ablation",
+                        "H3b: Full > Efficiency Ablation (communicative)")
+```
+
+
+# Export statistical results to LaTeX
+
+```{r export_tex}
+tex_line = function(key, value) {
+  sprintf("\\pgfkeyssetvalue{/%s}{%s}", key, value)
+}
+
+fmt = function(x, digits = 3) formatC(x, format = "f", digits = digits)
+fmt_p = function(p) {
+  if (p < .001) return("{<}.001")
+  sub("^0", "", fmt(p, 3))
+}
+
+# Extract beta (slope) from lm/glm
+get_beta = function(fit) coef(fit)[[2]]
+
+# Formatted inline result: ($r=0.82$, $p<.001$)
+fmt_result = function(r, p) {
+  p_str = if (p < .001) "p<.001" else sprintf("p=%s", sub("^0", "", fmt(p, 3)))
+  sprintf("$r=%s$, $%s$", fmt(r, 2), p_str)
+}
+
+lines = c(
+  "% Study 1a: Dish condition",
+  "% Effort ~ Timesteps",
+  tex_line("s1/dish/effort/tomato/beta", fmt(get_beta(fit_tomato))),
+  tex_line("s1/dish/effort/tomato/r", fmt(stats_tomato$r)),
+  tex_line("s1/dish/effort/tomato/rmse", fmt(stats_tomato$rmse, 2)),
+  tex_line("s1/dish/effort/tomato/p", fmt_p(stats_tomato$p)),
+  tex_line("s1/dish/effort/tomato/result", fmt_result(stats_tomato$r, stats_tomato$p)),
+  "",
+  tex_line("s1/dish/effort/onion/beta", fmt(get_beta(fit_onion))),
+  tex_line("s1/dish/effort/onion/r", fmt(stats_onion$r)),
+  tex_line("s1/dish/effort/onion/rmse", fmt(stats_onion$rmse, 2)),
+  tex_line("s1/dish/effort/onion/p", fmt_p(stats_onion$p)),
+  tex_line("s1/dish/effort/onion/result", fmt_result(stats_onion$r, stats_onion$p)),
+  "",
+  "% Intention ~ Relative Effort",
+  tex_line("s1/dish/intentEffort/beta", fmt(get_beta(fit_ei_dish))),
+  tex_line("s1/dish/intentEffort/r", fmt(stats_ei_dish$r)),
+  tex_line("s1/dish/intentEffort/rmse", fmt(stats_ei_dish$rmse, 2)),
+  tex_line("s1/dish/intentEffort/p", fmt_p(stats_ei_dish$p)),
+  tex_line("s1/dish/intentEffort/result", fmt_result(stats_ei_dish$r, stats_ei_dish$p)),
+  "",
+  "% Intention ~ Relative Timesteps",
+  tex_line("s1/dish/intentModel/beta", fmt(get_beta(fit_mi_dish))),
+  tex_line("s1/dish/intentModel/r", fmt(stats_mi_dish$r)),
+  tex_line("s1/dish/intentModel/rmse", fmt(stats_mi_dish$rmse, 2)),
+  tex_line("s1/dish/intentModel/p", fmt_p(stats_mi_dish$p)),
+  tex_line("s1/dish/intentModel/result", fmt_result(stats_mi_dish$r, stats_mi_dish$p)),
+  "",
+  "% Study 1b: Cooks condition",
+  "% Effort ~ Timesteps",
+  tex_line("s1/cooks/effort/oneCook/beta", fmt(get_beta(fit_one))),
+  tex_line("s1/cooks/effort/oneCook/r", fmt(stats_one$r)),
+  tex_line("s1/cooks/effort/oneCook/rmse", fmt(stats_one$rmse, 2)),
+  tex_line("s1/cooks/effort/oneCook/p", fmt_p(stats_one$p)),
+  tex_line("s1/cooks/effort/oneCook/result", fmt_result(stats_one$r, stats_one$p)),
+  "",
+  tex_line("s1/cooks/effort/greedyGreedy/beta", fmt(get_beta(fit_gg))),
+  tex_line("s1/cooks/effort/greedyGreedy/r", fmt(stats_gg$r)),
+  tex_line("s1/cooks/effort/greedyGreedy/rmse", fmt(stats_gg$rmse, 2)),
+  tex_line("s1/cooks/effort/greedyGreedy/p", fmt_p(stats_gg$p)),
+  tex_line("s1/cooks/effort/greedyGreedy/result", fmt_result(stats_gg$r, stats_gg$p)),
+  "",
+  tex_line("s1/cooks/effort/bdBd/beta", fmt(get_beta(fit_bd))),
+  tex_line("s1/cooks/effort/bdBd/r", fmt(stats_bd$r)),
+  tex_line("s1/cooks/effort/bdBd/rmse", fmt(stats_bd$rmse, 2)),
+  tex_line("s1/cooks/effort/bdBd/p", fmt_p(stats_bd$p)),
+  tex_line("s1/cooks/effort/bdBd/result", fmt_result(stats_bd$r, stats_bd$p)),
+  "",
+  tex_line("s1/cooks/effort/mixture/w", fmt(w_mle)),
+  tex_line("s1/cooks/effort/mixture/beta", fmt(get_beta(fit_mix))),
+  tex_line("s1/cooks/effort/mixture/r", fmt(stats_mix$r)),
+  tex_line("s1/cooks/effort/mixture/rmse", fmt(stats_mix$rmse, 2)),
+  tex_line("s1/cooks/effort/mixture/p", fmt_p(stats_mix$p)),
+  tex_line("s1/cooks/effort/mixture/result", fmt_result(stats_mix$r, stats_mix$p)),
+  "",
+  "% Intention ~ Relative Effort",
+  tex_line("s1/cooks/intentEffort/beta", fmt(get_beta(fit_ei_cooks))),
+  tex_line("s1/cooks/intentEffort/r", fmt(stats_ei_cooks$r)),
+  tex_line("s1/cooks/intentEffort/rmse", fmt(stats_ei_cooks$rmse, 2)),
+  tex_line("s1/cooks/intentEffort/p", fmt_p(stats_ei_cooks$p)),
+  tex_line("s1/cooks/intentEffort/result", fmt_result(stats_ei_cooks$r, stats_ei_cooks$p)),
+  "",
+  "% Intention ~ Relative Timesteps",
+  tex_line("s1/cooks/intentModel/beta", fmt(get_beta(fit_mi_cooks))),
+  tex_line("s1/cooks/intentModel/r", fmt(stats_mi_cooks$r)),
+  tex_line("s1/cooks/intentModel/rmse", fmt(stats_mi_cooks$rmse, 2)),
+  tex_line("s1/cooks/intentModel/p", fmt_p(stats_mi_cooks$p)),
+  tex_line("s1/cooks/intentModel/result", fmt_result(stats_mi_cooks$r, stats_mi_cooks$p)),
+  "",
+  "% Intention ~ Relative Effort + Chopping Boards",
+  tex_line("s1/cooks/heuristicEffort/betaEffort", fmt(coef(fit_heuristic_effort)[["delta_effort"]])),
+  tex_line("s1/cooks/heuristicEffort/betaChoppingBoards", fmt(coef(fit_heuristic_effort)[["n_chopping_boards"]])),
+  tex_line("s1/cooks/heuristicEffort/r", fmt(stats_heuristic_effort$r)),
+  tex_line("s1/cooks/heuristicEffort/rmse", fmt(stats_heuristic_effort$rmse, 2)),
+  tex_line("s1/cooks/heuristicEffort/p", fmt_p(stats_heuristic_effort$p)),
+  tex_line("s1/cooks/heuristicEffort/result", fmt_result(stats_heuristic_effort$r, stats_heuristic_effort$p)),
+  "",
+  "% Intention ~ Relative Timesteps + Chopping Boards",
+  tex_line("s1/cooks/heuristicModel/betaTimesteps", fmt(coef(fit_heuristic)[["delta_ts"]])),
+  tex_line("s1/cooks/heuristicModel/betaChoppingBoards", fmt(coef(fit_heuristic)[["n_chopping_boards"]])),
+  tex_line("s1/cooks/heuristicModel/r", fmt(stats_heuristic$r)),
+  tex_line("s1/cooks/heuristicModel/rmse", fmt(stats_heuristic$rmse, 2)),
+  tex_line("s1/cooks/heuristicModel/p", fmt_p(stats_heuristic$p)),
+  tex_line("s1/cooks/heuristicModel/result", fmt_result(stats_heuristic$r, stats_heuristic$p)),
+  "",
+  "% ==============================",
+  "% Study 2",
+  "% ==============================",
+  "",
+  "% H0 results",
+  tex_line("s2/h0a/base/meanTvd", fmt(h0a_base$mean_tvd)),
+  tex_line("s2/h0a/base/pCombined", fmt_p(h0a_base$p_combined_tvd)),
+  tex_line("s2/h0a/base/result",
+           sprintf("$\\text{TVD}=%s$, $%s$", fmt(h0a_base$mean_tvd),
+                   if (h0a_base$p_combined_tvd < .001) "p<.001"
+                   else sprintf("p=%s", sub("^0", "", fmt(h0a_base$p_combined_tvd, 3))))),
+  tex_line("s2/h0a/comm/meanTvd", fmt(h0a_comm$mean_tvd)),
+  tex_line("s2/h0a/comm/pCombined", fmt_p(h0a_comm$p_combined_tvd)),
+  tex_line("s2/h0a/comm/result",
+           sprintf("$\\text{TVD}=%s$, $%s$", fmt(h0a_comm$mean_tvd),
+                   if (h0a_comm$p_combined_tvd < .001) "p<.001"
+                   else sprintf("p=%s", sub("^0", "", fmt(h0a_comm$p_combined_tvd, 3))))),
+  tex_line("s2/h0b/meanTvd", fmt(h0b_summary$mean_tvd)),
+  tex_line("s2/h0b/pCombined", fmt_p(h0b_summary$p_combined_tvd)),
+  tex_line("s2/h0b/result",
+           sprintf("$\\text{TVD}=%s$, $%s$", fmt(h0b_summary$mean_tvd),
+                   if (h0b_summary$p_combined_tvd < .001) "p<.001"
+                   else sprintf("p=%s", sub("^0", "", fmt(h0b_summary$p_combined_tvd, 3))))),
+  ""
+)
+
+# Add S2 model parameters
+for (cond in c("base", "comm")) {
+  cond_filter = if (cond == "base") "base" else "communicative"
+  for (mod in c("full", "oracle", "inference_ablation", "efficiency_ablation")) {
+    row = params_s2 %>% filter(model == mod, condition == cond_filter)
+    if (nrow(row) == 0) next
+    mod_short = gsub("_ablation", "Abl", mod)
+    prefix = sprintf("s2/%s/beta/%s", cond, mod_short)
+    lines = c(lines,
+      tex_line(prefix, sprintf("%.4f~[%.4f, %.4f]", row$beta, row$beta_lower, row$beta_upper))
+    )
+    prefix_elpd = sprintf("s2/%s/elpd/%s", cond, mod_short)
+    lines = c(lines,
+      tex_line(prefix_elpd, sprintf("%.1f~(%.1f)", row$elpd, row$se))
+    )
+  }
+  lines = c(lines, "")
+}
+
+# Hypothesis test results
+fmt_loo_result = function(comparison, label) {
+  delta = comparison[2, "elpd_diff"]
+  se = comparison[2, "se_diff"]
+  winner = rownames(comparison)[1]
+  c(
+    tex_line(paste0(label, "/deltaElpd"), fmt(delta, 2)),
+    tex_line(paste0(label, "/se"), fmt(se, 2)),
+    tex_line(paste0(label, "/result"),
+             sprintf("$\\Delta\\text{elpd} = %s \\pm %s$", fmt(delta, 2), fmt(se, 2)))
+  )
+}
+
+lines = c(lines,
+  "% Hypothesis tests",
+  fmt_loo_result(loo_compare_h1, "s2/h1"),
+  fmt_loo_result(loo_compare_h2a, "s2/h2a"),
+  fmt_loo_result(loo_compare_h2b, "s2/h2b"),
+  fmt_loo_result(loo_compare_h3a, "s2/h3a"),
+  fmt_loo_result(loo_compare_h3b, "s2/h3b")
+)
+
+tex_path = "../../data/cogsci2026_stats.tex"
+writeLines(lines, tex_path)
+cat(sprintf("Wrote %d lines to %s\n", length(lines), tex_path))
+
+# --- Table v1: ΔELPD comparison (compact) ---
+all_base = list(Full = loo_base[["full"]], Oracle = loo_base[["oracle"]],
+                `Inf.\\ Abl.` = loo_base[["inference_ablation"]],
+                `Eff.\\ Abl.` = loo_base[["efficiency_ablation"]],
+                Uniform = loo_baseline)
+all_comm = list(Full = loo_comm[["full"]], Oracle = loo_comm[["oracle"]],
+                `Inf.\\ Abl.` = loo_comm[["inference_ablation"]],
+                `Eff.\\ Abl.` = loo_comm[["efficiency_ablation"]],
+                Uniform = loo_baseline)
+
+comp_base = loo_compare(all_base)
+comp_comm = loo_compare(all_comm)
+
+fmt_neg = function(x, digits = 1) {
+  if (x < 0) sprintf("$-$%s", formatC(abs(x), format = "f", digits = digits))
+  else formatC(x, format = "f", digits = digits)
+}
+fmt_cell = function(comp, i) {
+  if (i == 1) "\\textbf{0 (0)}"
+  else sprintf("%s (%s)", fmt_neg(comp[i, "elpd_diff"]), fmt_neg(comp[i, "se_diff"]))
+}
+
+base_cells = setNames(
+  sapply(seq_len(nrow(comp_base)), function(i) fmt_cell(comp_base, i)),
+  rownames(comp_base))
+comm_cells = setNames(
+  sapply(seq_len(nrow(comp_comm)), function(i) fmt_cell(comp_comm, i)),
+  rownames(comp_comm))
+
+model_rows_tex = c("Oracle", "Full", "Inf.\\ Abl.", "Eff.\\ Abl.", "Uniform")
+
+table_v1_body = paste(sapply(model_rows_tex, function(m) {
+  sprintf("        %s & %s & %s \\\\", m, base_cells[m], comm_cells[m])
+}), collapse = "\n")
+
+table_v1_str = paste(c(
+  "\\begin{tabular*}{\\columnwidth}{l @{\\extracolsep{\\fill}} r @{\\extracolsep{\\fill}} r}",
+  "    \\toprule",
+  "    Model & Known-goal & Unknown-goal \\\\",
+  "    \\midrule",
+  table_v1_body,
+  "    \\bottomrule",
+  "\\end{tabular*}"
+), collapse = "\n")
+
+# --- Table v2: ΔELPD + Accuracy by condition, single-column layout ---
+model_tex_names = c(full = "Full", oracle = "Oracle",
+                    inference_ablation = "Inf.\\ Abl.", efficiency_ablation = "Eff.\\ Abl.",
+                    uniform = "Uniform")
+loo_name_to_key = c(Full = "full", Oracle = "oracle",
+                    `Inf.\\ Abl.` = "inference_ablation", `Eff.\\ Abl.` = "efficiency_ablation",
+                    Uniform = "uniform")
+model_order_keys = c("oracle", "full", "inference_ablation", "efficiency_ablation", "uniform")
+
+get_condition_cells = function(cond, comp) {
+  elpd_cells = setNames(
+    sapply(seq_len(nrow(comp)), function(i) fmt_cell(comp, i)),
+    rownames(comp))
+
+  acc_vals = sapply(model_order_keys, function(mod) {
+    row = model_accs_s2 %>% filter(model == mod, condition == cond)
+    if (nrow(row) == 0) return(NA)
+    row$accuracy
+  })
+  best_acc = which.max(acc_vals)
+
+  lapply(seq_along(model_order_keys), function(j) {
+    mod = model_order_keys[j]
+    loo_row_name = names(loo_name_to_key)[loo_name_to_key == mod]
+    elpd_val = if (length(loo_row_name) > 0 && loo_row_name %in% names(elpd_cells)) elpd_cells[loo_row_name] else "---"
+
+    acc_row = model_accs_s2 %>% filter(model == mod, condition == cond)
+    if (nrow(acc_row) > 0) {
+      acc_str = sprintf("%.1f (%.1f, %.1f)", acc_row$accuracy * 100, acc_row$ci_lower * 100, acc_row$ci_upper * 100)
+      if (j == best_acc) acc_str = sprintf("\\textbf{%s}", acc_str)
+    } else acc_str = "---"
+
+    list(elpd = elpd_val, acc = acc_str)
+  })
+}
+
+base_cells = get_condition_cells("base", comp_base)
+comm_cells = get_condition_cells("communicative", comp_comm)
+
+make_condition_block = function(cells, cond_label, comp) {
+  human_acc_str = "---"
+  if (!is.null(ceiling_acc_s2)) {
+    hr = ceiling_acc_s2 %>% filter(condition == ifelse(cond_label == "Known-goal", "base", "communicative"))
+    if (nrow(hr) > 0) human_acc_str = sprintf("%.1f (%.1f, %.1f)", hr$accuracy * 100, hr$ci_lower * 100, hr$ci_upper * 100)
+  }
+  model_rows = sapply(seq_along(model_order_keys), function(j) {
+    tex_name = model_tex_names[model_order_keys[j]]
+    sprintf("    %s & %s & %s \\\\", tex_name, cells[[j]]$elpd, cells[[j]]$acc)
+  })
+  human_row = sprintf("    \\textit{Human} & --- & %s \\\\", human_acc_str)
+  c(sprintf("    \\multicolumn{3}{l}{\\textit{%s}} \\\\", cond_label),
+    model_rows,
+    "    \\addlinespace",
+    human_row)
+}
+
+block_base = make_condition_block(base_cells, "Known-goal", comp_base)
+block_comm = make_condition_block(comm_cells, "Unknown-goal", comp_comm)
+
+table_v2_body = paste(c(block_base, "    \\midrule", block_comm), collapse = "\n")
+
+table_v2_str = paste(c(
+  "\\begin{tabular*}{\\columnwidth}{l @{\\extracolsep{\\fill}} r @{\\extracolsep{\\fill}} r}",
+  "    \\toprule",
+  "    Model & $\\Delta$\\,elpd (\\textit{se}) & Acc.\\@ (\\%) \\\\",
+  "    \\midrule",
+  table_v2_body,
+  "    \\bottomrule",
+  "\\end{tabular*}"
+), collapse = "\n")
+
+lines = c(lines, "",
+  sprintf("\\pgfkeyssetvalue{/s2/comparisontable}{%s}", table_v1_str),
+  "",
+  sprintf("\\pgfkeyssetvalue{/s2/resultstable}{%s}", table_v2_str))
+
+writeLines(lines, tex_path)
+cat(sprintf("Wrote %d lines to %s\n", length(lines), tex_path))
+```
+
+# Session info
+
+```{r session_info}
+sessionInfo()
+```

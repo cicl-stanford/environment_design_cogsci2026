@@ -1,0 +1,15 @@
+{
+  "id": "9ea49cb3-212e-452f-908a-09b81601fe45",
+  "floor_plan": "-----T-\n-     -\np     -\n/     1\nL     -\n*     -\n-----O-",
+  "furniture": {
+    "grid": [
+      ["-", "-"],
+      ["-", "-"],
+      ["-", "-"]
+    ],
+    "id": "0_on_table__9ea49cb3-212e-452f-908a-09b81601fe45",
+    "name": "Table"
+  },
+  "notes": "Intended to differentiate full vs. inference-ablation model. Difference intended when making both Onion and Tomato Salad. There are no differences in which placements are feasible between the dishes. This layout has 0 objects on the table.",
+  "created_at": "2025-12-19T18:08:38.115751Z"
+}

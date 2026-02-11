@@ -1,0 +1,170 @@
+% Study 1a: Dish condition
+% Effort ~ Timesteps
+\pgfkeyssetvalue{/s1/dish/effort/tomato/beta}{1.397}
+\pgfkeyssetvalue{/s1/dish/effort/tomato/r}{0.676}
+\pgfkeyssetvalue{/s1/dish/effort/tomato/rmse}{10.60}
+\pgfkeyssetvalue{/s1/dish/effort/tomato/p}{.004}
+\pgfkeyssetvalue{/s1/dish/effort/tomato/result}{$r=0.68$, $p=.004$}
+
+\pgfkeyssetvalue{/s1/dish/effort/onion/beta}{1.414}
+\pgfkeyssetvalue{/s1/dish/effort/onion/r}{0.816}
+\pgfkeyssetvalue{/s1/dish/effort/onion/rmse}{8.73}
+\pgfkeyssetvalue{/s1/dish/effort/onion/p}{{<}.001}
+\pgfkeyssetvalue{/s1/dish/effort/onion/result}{$r=0.82$, $p<.001$}
+
+% Intention ~ Relative Effort
+\pgfkeyssetvalue{/s1/dish/intentEffort/beta}{0.052}
+\pgfkeyssetvalue{/s1/dish/intentEffort/r}{0.984}
+\pgfkeyssetvalue{/s1/dish/intentEffort/rmse}{4.90}
+\pgfkeyssetvalue{/s1/dish/intentEffort/p}{{<}.001}
+\pgfkeyssetvalue{/s1/dish/intentEffort/result}{$r=0.98$, $p<.001$}
+
+% Intention ~ Relative Timesteps
+\pgfkeyssetvalue{/s1/dish/intentModel/beta}{0.033}
+\pgfkeyssetvalue{/s1/dish/intentModel/r}{0.796}
+\pgfkeyssetvalue{/s1/dish/intentModel/rmse}{16.87}
+\pgfkeyssetvalue{/s1/dish/intentModel/p}{{<}.001}
+\pgfkeyssetvalue{/s1/dish/intentModel/result}{$r=0.80$, $p<.001$}
+
+% Study 1b: Cooks condition
+% Effort ~ Timesteps
+\pgfkeyssetvalue{/s1/cooks/effort/oneCook/beta}{0.788}
+\pgfkeyssetvalue{/s1/cooks/effort/oneCook/r}{0.782}
+\pgfkeyssetvalue{/s1/cooks/effort/oneCook/rmse}{7.81}
+\pgfkeyssetvalue{/s1/cooks/effort/oneCook/p}{{<}.001}
+\pgfkeyssetvalue{/s1/cooks/effort/oneCook/result}{$r=0.78$, $p<.001$}
+
+\pgfkeyssetvalue{/s1/cooks/effort/greedyGreedy/beta}{0.445}
+\pgfkeyssetvalue{/s1/cooks/effort/greedyGreedy/r}{0.654}
+\pgfkeyssetvalue{/s1/cooks/effort/greedyGreedy/rmse}{4.64}
+\pgfkeyssetvalue{/s1/cooks/effort/greedyGreedy/p}{.006}
+\pgfkeyssetvalue{/s1/cooks/effort/greedyGreedy/result}{$r=0.65$, $p=.006$}
+
+\pgfkeyssetvalue{/s1/cooks/effort/bdBd/beta}{0.788}
+\pgfkeyssetvalue{/s1/cooks/effort/bdBd/r}{0.699}
+\pgfkeyssetvalue{/s1/cooks/effort/bdBd/rmse}{4.38}
+\pgfkeyssetvalue{/s1/cooks/effort/bdBd/p}{.003}
+\pgfkeyssetvalue{/s1/cooks/effort/bdBd/result}{$r=0.70$, $p=.003$}
+
+\pgfkeyssetvalue{/s1/cooks/effort/mixture/w}{0.828}
+\pgfkeyssetvalue{/s1/cooks/effort/mixture/beta}{0.732}
+\pgfkeyssetvalue{/s1/cooks/effort/mixture/r}{0.705}
+\pgfkeyssetvalue{/s1/cooks/effort/mixture/rmse}{4.35}
+\pgfkeyssetvalue{/s1/cooks/effort/mixture/p}{.002}
+\pgfkeyssetvalue{/s1/cooks/effort/mixture/result}{$r=0.71$, $p=.002$}
+
+% Intention ~ Relative Effort
+\pgfkeyssetvalue{/s1/cooks/intentEffort/beta}{0.038}
+\pgfkeyssetvalue{/s1/cooks/intentEffort/r}{0.581}
+\pgfkeyssetvalue{/s1/cooks/intentEffort/rmse}{15.35}
+\pgfkeyssetvalue{/s1/cooks/intentEffort/p}{{<}.001}
+\pgfkeyssetvalue{/s1/cooks/intentEffort/result}{$r=0.58$, $p<.001$}
+
+% Intention ~ Relative Timesteps
+\pgfkeyssetvalue{/s1/cooks/intentModel/beta}{0.016}
+\pgfkeyssetvalue{/s1/cooks/intentModel/r}{0.447}
+\pgfkeyssetvalue{/s1/cooks/intentModel/rmse}{16.87}
+\pgfkeyssetvalue{/s1/cooks/intentModel/p}{{<}.001}
+\pgfkeyssetvalue{/s1/cooks/intentModel/result}{$r=0.45$, $p<.001$}
+
+% Intention ~ Relative Effort + Chopping Boards
+\pgfkeyssetvalue{/s1/cooks/heuristicEffort/betaEffort}{0.027}
+\pgfkeyssetvalue{/s1/cooks/heuristicEffort/betaChoppingBoards}{1.435}
+\pgfkeyssetvalue{/s1/cooks/heuristicEffort/r}{0.980}
+\pgfkeyssetvalue{/s1/cooks/heuristicEffort/rmse}{3.74}
+\pgfkeyssetvalue{/s1/cooks/heuristicEffort/p}{{<}.001}
+\pgfkeyssetvalue{/s1/cooks/heuristicEffort/result}{$r=0.98$, $p<.001$}
+
+% Intention ~ Relative Timesteps + Chopping Boards
+\pgfkeyssetvalue{/s1/cooks/heuristicModel/betaTimesteps}{0.011}
+\pgfkeyssetvalue{/s1/cooks/heuristicModel/betaChoppingBoards}{1.513}
+\pgfkeyssetvalue{/s1/cooks/heuristicModel/r}{0.954}
+\pgfkeyssetvalue{/s1/cooks/heuristicModel/rmse}{5.65}
+\pgfkeyssetvalue{/s1/cooks/heuristicModel/p}{{<}.001}
+\pgfkeyssetvalue{/s1/cooks/heuristicModel/result}{$r=0.95$, $p<.001$}
+
+% ==============================
+% Study 2
+% ==============================
+
+% H0 results
+\pgfkeyssetvalue{/s2/h0a/base/meanTvd}{0.373}
+\pgfkeyssetvalue{/s2/h0a/base/pCombined}{{<}.001}
+\pgfkeyssetvalue{/s2/h0a/base/result}{$\text{TVD}=0.373$, $p<.001$}
+\pgfkeyssetvalue{/s2/h0a/comm/meanTvd}{0.446}
+\pgfkeyssetvalue{/s2/h0a/comm/pCombined}{{<}.001}
+\pgfkeyssetvalue{/s2/h0a/comm/result}{$\text{TVD}=0.446$, $p<.001$}
+\pgfkeyssetvalue{/s2/h0b/meanTvd}{0.159}
+\pgfkeyssetvalue{/s2/h0b/pCombined}{.010}
+\pgfkeyssetvalue{/s2/h0b/result}{$\text{TVD}=0.159$, $p=.010$}
+
+\pgfkeyssetvalue{/s2/base/beta/full}{0.0387~[0.0379, 0.0395]}
+\pgfkeyssetvalue{/s2/base/elpd/full}{-4705.5~(26.7)}
+\pgfkeyssetvalue{/s2/base/beta/oracle}{0.0558~[0.0547, 0.0569]}
+\pgfkeyssetvalue{/s2/base/elpd/oracle}{-4607.1~(19.4)}
+\pgfkeyssetvalue{/s2/base/beta/inferenceAbl}{0.0369~[0.0362, 0.0376]}
+\pgfkeyssetvalue{/s2/base/elpd/inferenceAbl}{-4616.4~(18.9)}
+\pgfkeyssetvalue{/s2/base/beta/efficiencyAbl}{-1.7953~[-1.9387, -1.6498]}
+\pgfkeyssetvalue{/s2/base/elpd/efficiencyAbl}{-6417.8~(24.4)}
+
+\pgfkeyssetvalue{/s2/comm/beta/full}{0.0377~[0.0369, 0.0384]}
+\pgfkeyssetvalue{/s2/comm/elpd/full}{-4934.1~(37.3)}
+\pgfkeyssetvalue{/s2/comm/beta/oracle}{0.0544~[0.0533, 0.0555]}
+\pgfkeyssetvalue{/s2/comm/elpd/oracle}{-4865.9~(31.8)}
+\pgfkeyssetvalue{/s2/comm/beta/inferenceAbl}{0.0359~[0.0352, 0.0365]}
+\pgfkeyssetvalue{/s2/comm/elpd/inferenceAbl}{-4906.2~(31.7)}
+\pgfkeyssetvalue{/s2/comm/beta/efficiencyAbl}{-1.6548~[-1.7997, -1.5063]}
+\pgfkeyssetvalue{/s2/comm/elpd/efficiencyAbl}{-6406.4~(22.7)}
+
+% Hypothesis tests
+\pgfkeyssetvalue{/s2/h1/deltaElpd}{-1356.69}
+\pgfkeyssetvalue{/s2/h1/se}{19.38}
+\pgfkeyssetvalue{/s2/h1/result}{$\Delta\text{elpd} = -1356.69 \pm 19.38$}
+\pgfkeyssetvalue{/s2/h2a/deltaElpd}{-98.38}
+\pgfkeyssetvalue{/s2/h2a/se}{14.82}
+\pgfkeyssetvalue{/s2/h2a/result}{$\Delta\text{elpd} = -98.38 \pm 14.82$}
+\pgfkeyssetvalue{/s2/h2b/deltaElpd}{-68.16}
+\pgfkeyssetvalue{/s2/h2b/se}{14.92}
+\pgfkeyssetvalue{/s2/h2b/result}{$\Delta\text{elpd} = -68.16 \pm 14.92$}
+\pgfkeyssetvalue{/s2/h3a/deltaElpd}{-27.86}
+\pgfkeyssetvalue{/s2/h3a/se}{19.76}
+\pgfkeyssetvalue{/s2/h3a/result}{$\Delta\text{elpd} = -27.86 \pm 19.76$}
+\pgfkeyssetvalue{/s2/h3b/deltaElpd}{-1472.35}
+\pgfkeyssetvalue{/s2/h3b/se}{51.92}
+\pgfkeyssetvalue{/s2/h3b/result}{$\Delta\text{elpd} = -1472.35 \pm 51.92$}
+
+\pgfkeyssetvalue{/s2/comparisontable}{\begin{tabular*}{\columnwidth}{l @{\extracolsep{\fill}} r @{\extracolsep{\fill}} r}
+    \toprule
+    Model & Known-goal & Unknown-goal \\
+    \midrule
+        Oracle & \textbf{0 (0)} & \textbf{0 (0)} \\
+        Full & $-$98.4 (14.8) & $-$68.2 (14.9) \\
+        Inf.\ Abl. & $-$9.3 (5.3) & $-$40.3 (7.1) \\
+        Eff.\ Abl. & $-$1810.7 (34.2) & $-$1540.5 (41.8) \\
+        Uniform & $-$1356.7 (19.4) & $-$1097.9 (31.8) \\
+    \bottomrule
+\end{tabular*}}
+
+\pgfkeyssetvalue{/s2/resultstable}{\begin{tabular*}{\columnwidth}{l @{\extracolsep{\fill}} r @{\extracolsep{\fill}} r}
+    \toprule
+    Model & $\Delta$\,elpd (\textit{se}) & Acc.\@ (\%) \\
+    \midrule
+    \multicolumn{3}{l}{\textit{Known-goal}} \\
+    Oracle & \textbf{0 (0)} & 30.2 (23.6, 37.8) \\
+    Full & $-$98.4 (14.8) & 23.9 (16.8, 30.9) \\
+    Inf.\ Abl. & $-$9.3 (5.3) & \textbf{32.2 (27.0, 38.1)} \\
+    Eff.\ Abl. & $-$1810.7 (34.2) & 4.3 (2.4, 6.4) \\
+    Uniform & $-$1356.7 (19.4) & 8.3 (8.3, 8.3) \\
+    \addlinespace
+    \textit{Human} & --- & 41.6 (39.8, 42.9) \\
+    \midrule
+    \multicolumn{3}{l}{\textit{Unknown-goal}} \\
+    Oracle & \textbf{0 (0)} & 25.2 (19.0, 32.6) \\
+    Full & $-$68.2 (14.9) & 22.2 (16.5, 28.7) \\
+    Inf.\ Abl. & $-$40.3 (7.1) & \textbf{25.9 (20.5, 32.0)} \\
+    Eff.\ Abl. & $-$1540.5 (41.8) & 4.3 (2.6, 6.1) \\
+    Uniform & $-$1097.9 (31.8) & 8.3 (8.3, 8.3) \\
+    \addlinespace
+    \textit{Human} & --- & 40.1 (38.6, 41.0) \\
+    \bottomrule
+\end{tabular*}}

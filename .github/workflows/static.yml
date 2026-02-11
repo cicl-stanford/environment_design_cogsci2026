@@ -1,0 +1,53 @@
+name: Deploy static content to Pages
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+env:
+  SITE_DIR: project_code/experiments
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          sparse-checkout: |
+            ${{ env.SITE_DIR }}
+          sparse-checkout-cone-mode: true
+
+      - name: Ensure .nojekyll (serve files starting with _)
+        run: |
+          touch "${{ env.SITE_DIR }}/.nojekyll"
+
+      - name: Validate site directory exists
+        run: |
+          test -d "${{ env.SITE_DIR }}" && echo "Found ${{ env.SITE_DIR }}" || (echo "Missing ${{ env.SITE_DIR }}" && exit 1)
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ env.SITE_DIR }}
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

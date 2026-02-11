@@ -1,0 +1,15 @@
+{
+  "id": "e5abe513-7271-4d97-8f41-c67d5dc744c7",
+  "floor_plan": "-p-----\n1     /\n-     -\n-     -\n-     -\nL     -\n-----*-",
+  "furniture": {
+    "grid": [
+      ["T", "-"],
+      ["-", "-"],
+      ["-", "O"]
+    ],
+    "id": "2_on_table__e5abe513-7271-4d97-8f41-c67d5dc744c7",
+    "name": "Table"
+  },
+  "notes": "Intended to differentiate full vs. both oracle and inference-ablation models. Difference intended when making Onion Salad. There are no differences in which placements are feasible between the dishes. This layout has 2 objects on the table.",
+  "created_at": "2025-12-19T21:05:50.427278Z"
+}
