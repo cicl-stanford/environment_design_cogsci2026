@@ -134,8 +134,8 @@ For details on the statistical analyses, see [`project_code/R/R-readme.md`](proj
 
 *What is a [CRediT author statement](https://www.elsevier.com/authors/policies-and-guidelines/credit-author-statement)?*
 
-(left blank for peer review)
-<!-- - **Justin Yang:** TODO: fill in -->
-<!-- - **Lionel Wong:** TODO: fill in -->
-<!-- - **Judith E. Fan:** TODO: fill in -->
-<!-- - **Tobias Gerstenberg:** TODO: fill in -->
+
+- **Justin Yang:** Conceptualization, Methodology, Software, Validation, Formal analysis, Investigation, Data Curation, Writing - Original Draft, Writing - Review & Editing, Visualization, Project administration
+- **Lionel Wong:** TODO: fill in
+- **Judith E. Fan:** TODO: fill in
+- **Tobias Gerstenberg:** TODO: fill in
