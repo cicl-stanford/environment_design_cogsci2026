@@ -4,7 +4,7 @@
 
 <!-- Presented at the 48th Annual Meeting of the Cognitive Science Society (2026). -->
 
-[Link to paper](https://github.com/cicl-stanford/environment_design_cogsci2026/blob/main/fromchopped_0202.pdf)
+[Link to paper](https://github.com/cicl-stanford/environment_design_cogsci2026/blob/main/fromchopped_0202.pdf) · [Project website](https://cicl-stanford.github.io/environment_design_cogsci2026/)
 
 ```
 @inproceedings{yang2026environmentdesign,
