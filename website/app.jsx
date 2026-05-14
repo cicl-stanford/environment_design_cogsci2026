@@ -63,7 +63,7 @@ function Hero() {
         </ol>
 
         <div className="hero-cta">
-          <a className="cta cta-primary" href="https://github.com/cicl-stanford/environment_design_cogsci2026/blob/main/fromchopped_0202.pdf" target="_blank" rel="noopener">
+          <a className="cta cta-primary" href="https://github.com/cicl-stanford/environment_design_cogsci2026/blob/main/environment_design_cogsci2026.pdf" target="_blank" rel="noopener">
             <span>Paper</span>
             <ArrowIcon />
           </a>
